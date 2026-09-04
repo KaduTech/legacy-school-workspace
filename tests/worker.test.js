@@ -63,7 +63,7 @@ test('security report recipient service rejects a missing scanner token', async 
 });
 
 test('all operational workflow routes reject requests without a session', async () => {
-  for (const path of ['/api/teachers/teacher-1/onboarding', '/api/teachers/teacher-1/payment-details', '/api/teachers/teacher-1/invite', '/api/onboarding/item-1/remind', '/api/time-entries', '/api/pay-cycles', '/api/groups', '/api/forms', '/api/academic-dates', '/api/incidents']) {
+  for (const path of ['/api/teachers/teacher-1/onboarding', '/api/teachers/teacher-1/payment-details', '/api/teachers/teacher-1/invite', '/api/onboarding/item-1/remind', '/api/time-entries', '/api/pay-cycles', '/api/pay-cycles/cycle-1/salary-reports', '/api/salary-reports/report-1', '/api/groups', '/api/forms', '/api/academic-dates', '/api/incidents']) {
     const response = await worker.fetch(new Request(`https://app.example.test${path}`), env);
     assert.equal(response.status, 401, path);
   }
@@ -188,6 +188,21 @@ test('teacher onboarding invitations are rate-limited before an email is attempt
   const response = await worker.fetch(new Request('https://app.example.test/api/teachers/teacher-1/invite', { method: 'POST', headers: { cookie: await sessionCookie('admin-1') } }), scopedEnv);
   assert.equal(response.status, 409);
   assert.deepEqual(await response.json(), { error: 'An onboarding invitation was already sent for this teacher in the last 24 hours.' });
+});
+
+test('salary reports reject negative or estimated class counts before a write', async () => {
+  const scopedEnv = {
+    ...env,
+    DB: { prepare(query) { return { bind() { return this; }, async first() {
+      if (query.includes('FROM users')) return { id: 'teacher-user', email: 'teacher@example.test', name: 'Teacher', role: 'teacher', status: 'active', is_super_admin: 0 };
+      if (query.includes('SELECT id FROM teachers')) return { id: 'teacher-1' };
+      if (query.includes('FROM pay_cycles')) return { id: 'cycle-1', submission_due_on: '2099-01-17', status: 'open' };
+      return null;
+    } }; } }
+  };
+  const response = await worker.fetch(new Request('https://app.example.test/api/pay-cycles/cycle-1/salary-reports', { method: 'POST', headers: { cookie: await sessionCookie('teacher-user'), 'content-type': 'application/json' }, body: JSON.stringify({ groupAttendedCount: -1, groupNoShowCount: 0, oneToOneAttendedCount: 0, oneToOneNoShowCount: 0, oneToOneTrialCount: 0, notes: 'Actual count.' }) }), scopedEnv);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'All class counts must be whole numbers from 0–1000 and a short work summary is required.' });
 });
 
 test('Google callback rejects a missing or forged OAuth state before using the database', async () => {

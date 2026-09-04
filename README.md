@@ -68,6 +68,7 @@ All routes except `GET /api/health`, `POST /api/auth/request-link`, and the magi
 | Read a roster / mark attendance | `GET /api/groups/:groupId/roster`, `POST /api/attendance` | assigned teacher or operations; only enrolled/trial learners can be marked |
 | Submit / approve admin time | `POST /api/time-entries`, `PATCH /api/time-entries/:entryId` | teacher for own record; operational roles; finance can approve |
 | Create / advance a payment cycle | `POST /api/pay-cycles`, `PATCH /api/pay-cycles/:cycleId` | admin, finance, academics |
+| Submit / review salary report | `POST /api/pay-cycles/:cycleId/salary-reports`, `GET /api/pay-cycles/:cycleId/salary-reports`, `PATCH /api/salary-reports/:reportId` | teacher submits their own report; finance/admin reviews |
 | View the seeded academic calendar | `GET /api/academic-dates?from=YYYY-MM-DD&to=YYYY-MM-DD` | signed-in school users |
 | Report / resolve an operational incident | `POST /api/incidents`, `GET /api/incidents`, `PATCH /api/incidents/:incidentId` | all school roles can report; admin, academics, LSS resolve |
 | Set / view payment details | `PUT /api/teachers/:teacherId/payment-details`, `GET /api/teachers/:teacherId/payment-details` | own teacher record to set or view masked details; admin/finance can reveal with `?reveal=1` |
@@ -78,6 +79,7 @@ All routes except `GET /api/health`, `POST /api/auth/request-link`, and the magi
 ## Operational policy choices confirmed from the added sources
 
 - Admin time accepts only non-live work: grading, due dates, student/family communication, approved administration and approved classwork. The eight-hour monthly cap remains enforced.
+- Salary reports replace the recurring Google Form with separate counts for group attended/no-show classes and one-to-one attended/no-show/trial classes. A group with one learner remains a group class, and no-shows are never included in attended counts.
 - Group no-show reports require 20 minutes waited; one-to-one reports require 15. A report is not an automatic absence or parent-contact action. LSS can document escalation and resolution in the same record.
 - The source calendar is the 2026–27 planning baseline; it supersedes older chat announcements when the dates differ.
 - The supplied teacher announcement says the second half payment report is due on the 3rd of the following month, while the project brief says two days after the period. The application defaults to the brief (`two_calendar_days`). Set Worker variable `PAYMENT_DEADLINE_POLICY=legacy_announcement` only if the school confirms the legacy 17th/3rd rule.

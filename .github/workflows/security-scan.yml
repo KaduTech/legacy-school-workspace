@@ -1,0 +1,75 @@
+name: Legacy School security scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      email_dry_run:
+        description: Validate recipient configuration without sending email
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # 09:00 Africa/Lagos is 08:00 UTC all year.
+    - cron: "0 8 * * 1"
+  pull_request:
+    paths:
+      - "src/**"
+      - "migrations/**"
+      - "public/**"
+      - "scripts/security-scan.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - "wrangler.toml"
+      - ".github/workflows/security-scan.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "migrations/**"
+      - "public/**"
+      - "scripts/security-scan.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - "wrangler.toml"
+      - ".github/workflows/security-scan.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: legacy-school-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Scan changes and enforce High/Critical gate
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        run: npm run security:scan:ci
+      - name: Scheduled/manual security scan
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SECURITY_REPORT_TOKEN: ${{ secrets.SECURITY_REPORT_TOKEN }}
+          SECURITY_REPORT_SETTINGS_URL: ${{ vars.SECURITY_REPORT_SETTINGS_URL }}
+          SECURITY_EMAIL_FROM: ${{ vars.SECURITY_EMAIL_FROM }}
+        run: >-
+          node scripts/security-scan.mjs --live --fail-on=high
+          ${{ github.event.inputs.email_dry_run == 'true' && '--email-dry-run' || '--email' }}
+      - name: Upload redacted reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-school-security-report-${{ github.run_number }}
+          path: .security-reports/
+          retention-days: 30
+          include-hidden-files: true

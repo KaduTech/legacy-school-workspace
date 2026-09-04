@@ -59,6 +59,7 @@ All routes except `GET /api/health`, `POST /api/auth/request-link`, and the magi
 | Workflow | Route | Allowed roles |
 | --- | --- | --- |
 | Create a teacher | `POST /api/teachers` | admin, academics, lss |
+| Send teacher onboarding invitation | `POST /api/teachers/:teacherId/invite` | admin, academics, lss; one per teacher per 24 hours |
 | Start onboarding | `POST /api/teachers/:teacherId/onboarding` | admin, academics, lss |
 | Update onboarding item | `PATCH /api/onboarding/:itemId` | owner teacher or operational roles |
 | Send an onboarding reminder | `POST /api/onboarding/:itemId/remind` | admin, academics, lss; logged and rate-limited |

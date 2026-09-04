@@ -63,7 +63,7 @@ test('security report recipient service rejects a missing scanner token', async 
 });
 
 test('all operational workflow routes reject requests without a session', async () => {
-  for (const path of ['/api/teachers/teacher-1/onboarding', '/api/teachers/teacher-1/payment-details', '/api/onboarding/item-1/remind', '/api/time-entries', '/api/pay-cycles', '/api/groups', '/api/forms', '/api/academic-dates', '/api/incidents']) {
+  for (const path of ['/api/teachers/teacher-1/onboarding', '/api/teachers/teacher-1/payment-details', '/api/teachers/teacher-1/invite', '/api/onboarding/item-1/remind', '/api/time-entries', '/api/pay-cycles', '/api/groups', '/api/forms', '/api/academic-dates', '/api/incidents']) {
     const response = await worker.fetch(new Request(`https://app.example.test${path}`), env);
     assert.equal(response.status, 401, path);
   }
@@ -173,6 +173,23 @@ test('an invited teacher account activates only after its valid magic link is us
   assert.ok(writes.some(write => write.query.includes("UPDATE users SET status='active'")));
 });
 
+test('teacher onboarding invitations are rate-limited before an email is attempted', async () => {
+  const scopedEnv = {
+    ...env,
+    RESEND_API_KEY: 're_test_key',
+    RESEND_FROM: 'School <school@example.test>',
+    DB: { prepare(query) { return { bind() { return this; }, async first() {
+      if (query.includes('FROM users')) return { id: 'admin-1', email: 'admin@example.test', name: 'Admin', role: 'admin', status: 'active', is_super_admin: 0 };
+      if (query.includes('FROM teachers t JOIN users')) return { id: 'teacher-1', full_name: 'Teacher One', email: 'teacher@example.test', user_id: 'teacher-user', account_status: 'invited' };
+      if (query.includes('teacher_invitation_sends')) return { id: 'invite-1' };
+      return null;
+    } }; } }
+  };
+  const response = await worker.fetch(new Request('https://app.example.test/api/teachers/teacher-1/invite', { method: 'POST', headers: { cookie: await sessionCookie('admin-1') } }), scopedEnv);
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: 'An onboarding invitation was already sent for this teacher in the last 24 hours.' });
+});
+
 test('Google callback rejects a missing or forged OAuth state before using the database', async () => {
   const response = await worker.fetch(new Request('https://app.example.test/auth/google/callback?code=not-enough'), env);
   assert.equal(response.status, 401);
@@ -247,6 +264,7 @@ test('the workspace portal keeps the operational workflows reachable after navig
   assert.match(source, /root\.addEventListener\('click'/);
   assert.doesNotMatch(source, /\{once:true\}/);
   assert.match(source, /payment-details/);
+  assert.match(source, /teachers\/\$\{encodeURIComponent\(id\)\}\/invite/);
   assert.match(source, /\/api\/attendance/);
   assert.match(source, /\/api\/forms/);
 });

@@ -40,7 +40,15 @@ const secretMatches = async (provided, expected) => {
 async function currentUser(request, env) {
   const session = await verify(cookie(request, 'legacy_session'), env);
   if (!session) return null;
-  return env.DB.prepare('SELECT id,email,name,role,status,is_super_admin FROM users WHERE id=? AND status="active"').bind(session.sub).first();
+  const user = await env.DB.prepare('SELECT id,email,name,role,status,is_super_admin FROM users WHERE id=? AND status="active"').bind(session.sub).first();
+  // The configured bootstrap administrator is the only account that may be
+  // elevated implicitly. This makes the first security-report configuration
+  // possible without opening a self-service privilege-escalation route.
+  if (user && user.role === 'admin' && Number(user.is_super_admin) !== 1 && env.BOOTSTRAP_ADMIN_EMAIL?.trim().toLowerCase() === user.email.toLowerCase()) {
+    await env.DB.prepare('UPDATE users SET is_super_admin=1,updated_at=? WHERE id=?').bind(now(), user.id).run();
+    user.is_super_admin = 1;
+  }
+  return user;
 }
 async function audit(env, actor, action, entityType, entityId, metadata = {}) {
   await env.DB.prepare('INSERT INTO audit_logs (id,actor_user_id,action,entity_type,entity_id,metadata_json) VALUES (?,?,?,?,?,?)').bind(id(), actor?.id || null, action, entityType, entityId || null, JSON.stringify(metadata)).run();
@@ -117,8 +125,8 @@ async function allowMagicLinkRequest(request, env, email) {
 async function sendMagicLink(request, env, email) {
   let user = await env.DB.prepare('SELECT * FROM users WHERE email=? AND status!="disabled"').bind(email).first();
   if (!user && env.BOOTSTRAP_ADMIN_EMAIL?.toLowerCase() === email.toLowerCase()) {
-    user = { id: id(), email, name: 'School Administrator', role: 'admin', status: 'active' };
-    await env.DB.prepare('INSERT INTO users (id,email,name,role,status) VALUES (?,?,?,?,?)').bind(user.id, user.email, user.name, user.role, user.status).run();
+    user = { id: id(), email, name: 'School Administrator', role: 'admin', status: 'active', is_super_admin: 1 };
+    await env.DB.prepare('INSERT INTO users (id,email,name,role,status,is_super_admin) VALUES (?,?,?,?,?,?)').bind(user.id, user.email, user.name, user.role, user.status, user.is_super_admin).run();
   }
   // Always return the same response to avoid exposing whether a person exists in the school directory.
   if (!user) return json({ ok: true, message: 'If this address is authorized, a sign-in link has been sent.' });

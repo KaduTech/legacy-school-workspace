@@ -43,6 +43,19 @@ test('protected endpoints reject requests without a session', async () => {
   assert.deepEqual(await response.json(), { error: 'Authentication required' });
 });
 
+test('the configured bootstrap administrator is elevated to Super Admin without a public elevation route', async () => {
+  const writes = [];
+  const scopedEnv = {
+    ...env,
+    BOOTSTRAP_ADMIN_EMAIL: 'owner@example.test',
+    DB: { prepare(query) { return { bind(...values) { this.values = values; return this; }, async first() { return { id: 'owner-1', email: 'owner@example.test', name: 'Owner', role: 'admin', status: 'active', is_super_admin: 0 }; }, async run() { writes.push({ query, values: this.values }); return { success: true }; } }; } }
+  };
+  const response = await worker.fetch(new Request('https://app.example.test/api/me', { headers: { cookie: await sessionCookie('owner-1') } }), scopedEnv);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).user.is_super_admin, 1);
+  assert.ok(writes.some(write => write.query.includes('SET is_super_admin=1')));
+});
+
 test('security report recipient service rejects a missing scanner token', async () => {
   const response = await worker.fetch(new Request('https://app.example.test/api/security/report-recipients', { method: 'POST' }), env);
   assert.equal(response.status, 401);

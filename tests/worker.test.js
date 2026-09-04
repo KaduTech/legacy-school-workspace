@@ -56,6 +56,16 @@ test('the configured bootstrap administrator is elevated to Super Admin without 
   assert.ok(writes.some(write => write.query.includes('SET is_super_admin=1')));
 });
 
+test('a regular administrator cannot create or invite operational staff', async () => {
+  const scopedEnv = {
+    ...env,
+    DB: { prepare() { return { bind() { return this; }, async first() { return { id: 'admin-1', email: 'admin@example.test', name: 'Admin', role: 'admin', status: 'active', is_super_admin: 0 }; } }; } }
+  };
+  const response = await worker.fetch(new Request('https://app.example.test/api/staff', { method: 'POST', headers: { cookie: await sessionCookie('admin-1'), 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Finance', email: 'finance@example.test', role: 'finance' }) }), scopedEnv);
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: 'Insufficient permissions' });
+});
+
 test('security report recipient service rejects a missing scanner token', async () => {
   const response = await worker.fetch(new Request('https://app.example.test/api/security/report-recipients', { method: 'POST' }), env);
   assert.equal(response.status, 401);
@@ -63,7 +73,7 @@ test('security report recipient service rejects a missing scanner token', async 
 });
 
 test('all operational workflow routes reject requests without a session', async () => {
-  for (const path of ['/api/teachers/teacher-1/onboarding', '/api/teachers/teacher-1/payment-details', '/api/teachers/teacher-1/invite', '/api/onboarding/item-1/remind', '/api/time-entries', '/api/pay-cycles', '/api/pay-cycles/cycle-1/salary-reports', '/api/salary-reports/report-1', '/api/groups', '/api/forms', '/api/academic-dates', '/api/incidents']) {
+  for (const path of ['/api/teachers/teacher-1/onboarding', '/api/teachers/teacher-1/payment-details', '/api/teachers/teacher-1/invite', '/api/staff', '/api/staff/staff-1/invite', '/api/onboarding/item-1/remind', '/api/time-entries', '/api/pay-cycles', '/api/pay-cycles/cycle-1/salary-reports', '/api/salary-reports/report-1', '/api/groups', '/api/forms', '/api/academic-dates', '/api/incidents']) {
     const response = await worker.fetch(new Request(`https://app.example.test${path}`), env);
     assert.equal(response.status, 401, path);
   }

@@ -24,6 +24,14 @@ async function signedState(payloadObject, secret = env.AUTH_SECRET) {
   return `${payload}.${signature}`;
 }
 
+async function encryptedSecret(value, key) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const cryptoKey = await crypto.subtle.importKey('raw', Uint8Array.from(atob(key.replaceAll('-', '+').replaceAll('_', '/').padEnd(Math.ceil(key.length / 4) * 4, '=')), char => char.charCodeAt(0)), { name: 'AES-GCM' }, false, ['encrypt']);
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, new TextEncoder().encode(value));
+  const encode = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+  return { version: 1, algorithm: 'AES-GCM', iv: encode(iv), ciphertext: encode(ciphertext) };
+}
+
 test('health endpoint is public and reports service readiness', async () => {
   const response = await worker.fetch(new Request('https://app.example.test/api/health'), env);
   assert.equal(response.status, 200);
@@ -262,6 +270,37 @@ test('Google callback rejects a personal account that is not the approved school
     const state = await signedState({ sub: 'admin-user', exp: Date.now() + 60_000, purpose: 'google-oauth' });
     const response = await worker.fetch(new Request(`https://app.example.test/auth/google/callback?code=code&state=${encodeURIComponent(state)}`), scopedEnv);
     assert.equal(response.status, 403);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('an error-state form mapping is eligible for a retry rather than treated as missing', async () => {
+  const calls = [];
+  const encryptionKey = btoa(String.fromCharCode(...new Uint8Array(32).fill(8))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'access-token' });
+    if (String(url).startsWith('https://forms.googleapis.com/v1/forms/form-1/responses?')) return Response.json({ responses: [] });
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+  try {
+    const scopedEnv = {
+      ...env,
+      DATA_ENCRYPTION_KEY: encryptionKey,
+      GOOGLE_CLIENT_ID: 'client-id', GOOGLE_CLIENT_SECRET: 'client-secret',
+      DB: { prepare(query) { const call = { query, values: [] }; calls.push(call); return { bind(...values) { call.values = values; return this; }, async first() {
+        if (query.includes('FROM users')) return { id: 'admin-1', email: 'admin@example.test', name: 'Admin', role: 'admin', status: 'active' };
+        if (query.includes('FROM form_mappings')) return { id: 'mapping-1', google_form_id: 'form-1', status: 'error', last_response_at: null };
+        if (query.includes('FROM integration_settings')) return { config_json: JSON.stringify({ refreshToken: await encryptedSecret('refresh-token', encryptionKey) }) };
+        return null;
+      }, async run() { return { success: true }; } }; }, async batch() { return []; } }
+    };
+    const response = await worker.fetch(new Request('https://app.example.test/api/forms/mapping-1/sync', { method: 'POST', headers: { cookie: await sessionCookie('admin-1') } }), scopedEnv);
+    assert.equal(response.status, 200);
+    const mappingLookup = calls.find(call => call.query.includes('FROM form_mappings'));
+    assert.match(mappingLookup.query, /status!='paused'/);
+    assert.ok(calls.some(call => call.query.includes("SET status='active'")));
   } finally {
     globalThis.fetch = originalFetch;
   }

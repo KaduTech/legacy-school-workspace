@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import worker from '../src/worker.js';
 
 const env = {
@@ -225,4 +226,14 @@ test('payment account numbers are encrypted before the worker writes them to D1'
   assert.notEqual(update.values[2], '123456789');
   assert.match(update.values[2], /ciphertext/);
   assert.deepEqual(await response.json(), { ok: true, accountNumberMasked: '••••6789' });
+});
+
+test('the workspace portal keeps the operational workflows reachable after navigation', async () => {
+  const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  for (const label of ['Onboarding', 'Payments', 'Time & admin', 'Calendar', 'Incidents', 'Integrations']) assert.match(source, new RegExp(label));
+  assert.match(source, /root\.addEventListener\('click'/);
+  assert.doesNotMatch(source, /\{once:true\}/);
+  assert.match(source, /payment-details/);
+  assert.match(source, /\/api\/attendance/);
+  assert.match(source, /\/api\/forms/);
 });

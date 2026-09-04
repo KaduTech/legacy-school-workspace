@@ -62,9 +62,15 @@ jobs:
           SECURITY_REPORT_TOKEN: ${{ secrets.SECURITY_REPORT_TOKEN }}
           SECURITY_REPORT_SETTINGS_URL: ${{ vars.SECURITY_REPORT_SETTINGS_URL }}
           SECURITY_EMAIL_FROM: ${{ vars.SECURITY_EMAIL_FROM }}
-        run: >-
-          node scripts/security-scan.mjs --live --fail-on=high
-          ${{ github.event.inputs.email_dry_run == 'true' && '--email-dry-run' || '--email' }}
+        run: |
+          # Sending is deliberately opt-in: adding credentials must not cause mail.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.email_dry_run }}" = "true" ]; then
+            node scripts/security-scan.mjs --live --fail-on=high --email-dry-run
+          elif [ "${{ vars.SECURITY_EMAIL_ENABLED }}" = "true" ]; then
+            node scripts/security-scan.mjs --live --fail-on=high --email
+          else
+            node scripts/security-scan.mjs --live --fail-on=high
+          fi
       - name: Upload redacted reports
         if: always()
         uses: actions/upload-artifact@v4

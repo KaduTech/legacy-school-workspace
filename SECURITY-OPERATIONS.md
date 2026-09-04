@@ -41,9 +41,10 @@ Before enabling weekly email, configure these values:
 | `SECURITY_REPORT_TOKEN` | GitHub Actions secret and Cloudflare Worker secret | Scanner-to-portal recipient authorization |
 | `SECURITY_REPORT_SETTINGS_URL` | GitHub Actions variable | HTTPS recipient endpoint, normally `https://legacy.kadutech.com/api/security/report-recipients` |
 | `SECURITY_EMAIL_FROM` | GitHub Actions variable | Verified Resend sender |
+| `SECURITY_EMAIL_ENABLED` | GitHub Actions variable | Set to `true` only after the Owner authorizes real scheduled report delivery; otherwise scheduled scans do not send mail. |
 | `SECURITY_SCAN_LIVE_URLS` | GitHub Actions variable | Optional comma-separated public URLs for HEAD checks |
 
-Use the dry-run command before enabling real weekly email. It validates recipients without sending any message.
+Use the dry-run command before enabling real weekly email. It validates recipients without sending any message. Scheduled scans remain email-free until `SECURITY_EMAIL_ENABLED` is explicitly set to `true`.
 
 ## Risk register and release gate
 

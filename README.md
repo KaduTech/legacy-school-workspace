@@ -46,7 +46,7 @@ Before enabling the deployment workflow, set these GitHub values:
 | `CLOUDFLARE_ACCOUNT_ID` | Actions variable | The intended Cloudflare account ID. |
 | `CLOUDFLARE_D1_DATABASE_ID` | Actions variable | The D1 database ID created for this workspace. |
 
-Configure application secrets (`AUTH_SECRET`, `DATA_ENCRYPTION_KEY`, `RESEND_API_KEY`, and `GOOGLE_CLIENT_SECRET`) directly in Cloudflare before the first deploy. Do not place them in GitHub Actions secrets simply to echo them into a deployment; Cloudflare Workers secrets should remain in Cloudflare.
+Configure application secrets (`AUTH_SECRET`, `DATA_ENCRYPTION_KEY`, `RESEND_API_KEY`, and `GOOGLE_CLIENT_SECRET`) directly in Cloudflare once the Worker exists. Do not place Worker-only secrets in GitHub Actions simply to echo them into a deployment. `RESEND_API_KEY` is the exception: the independent scheduled scanner also needs its own GitHub Actions secret for report delivery.
 
 ## Security scanner
 

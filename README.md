@@ -8,7 +8,8 @@ Cloudflare-native school-operations application with a static workspace interfac
 - Passwordless, one-time magic-link authentication via Resend. Links are hashed in D1, expire after 15 minutes and create an HTTP-only, SameSite session cookie.
 - Role checks for `admin`, `academics`, `finance`, `lss`, and `teacher`; public and protected API boundaries are tested.
 - Teacher creation, admin-time submission with an enforced eight-hour monthly cap, calendar event creation, dashboard statistics, Google OAuth, school-calendar configuration, and Google Calendar event/Meet synchronization.
-- Onboarding-pathway seeding and progress updates, logged Resend reminders (limited to one reminder per item per 24 hours), many-to-many teacher/group assignments, finance-controlled payment-cycle transitions, time-entry approval actions, and encrypted Google Form response import queues.
+- Onboarding-pathway seeding and progress updates, logged Resend reminders (limited to one reminder per item per 24 hours), many-to-many teacher/group assignments, finance-controlled payment-cycle transitions, time-entry approval actions, and optional encrypted Google Form response import queues for non-payroll workflows.
+- Teacher session records for scheduled group, one-to-one and club events. Half-month reports snapshot system-calculated pay: USD 10 per completed group or one-to-one class, plus USD 5 per approved administrative hour. Missed and trial sessions remain visible but are not payable.
 - The supplied 2026–27 academic calendar is seeded as queryable, inclusive date ranges. School closures are kept distinct from live-class events, so calendar synchronization can make an explicit decision about cancellations.
 - A structured incident trail replaces informal no-show, urgent absence, class-link and placement escalation messages. It routes staff reports to LSS/operations without automatically messaging families or incorrectly marking unenrolled learners absent.
 - Cloudflare Pages/Workers asset deployment configuration with no credentials or payment details in source control.
@@ -74,13 +75,14 @@ All routes except `GET /api/health`, `POST /api/auth/request-link`, and the magi
 | Report / resolve an operational incident | `POST /api/incidents`, `GET /api/incidents`, `PATCH /api/incidents/:incidentId` | all school roles can report; admin, academics, LSS resolve |
 | Set / view payment details | `PUT /api/teachers/:teacherId/payment-details`, `GET /api/teachers/:teacherId/payment-details` | own teacher record to set or view masked details; admin/finance can reveal with `?reveal=1` |
 | Create calendar event | `POST /api/calendar/events` | admin, academics, lss |
+| Record a completed, missed or trial session | `POST /api/calendar/events/:eventId/session` | assigned teacher, after the scheduled event ends; one record per event |
 | Set Google Calendar / sync one event | `PUT /api/integrations/google/calendar`, `POST /api/calendar/events/:eventId/sync` | admin for configuration; admin, academics, lss for sync |
-| Map / import legacy Google Forms | `POST /api/forms`, `POST /api/forms/:mappingId/sync` | admin, academics, finance, lss |
+| Map / import optional Google Forms | `POST /api/forms`, `PATCH/DELETE /api/forms/:mappingId`, `POST /api/forms/:mappingId/sync` | admin, academics, finance, lss; onboarding, feedback or attendance only |
 
 ## Operational policy choices confirmed from the added sources
 
 - Admin time accepts only non-live work: grading, due dates, student/family communication, approved administration and approved classwork. The eight-hour monthly cap remains enforced.
-- Salary reports replace the recurring Google Form with separate counts for group attended/no-show classes and one-to-one attended/no-show/trial classes. A group with one learner remains a group class, and no-shows are never included in attended counts.
+- Salary reports replace the recurring Google Form. Teachers record the outcome of each scheduled class; the workspace totals completed group and one-to-one sessions at USD 10 each, plus approved administrative time at USD 5/hour. A group with one learner remains a group class, and no-shows or trials are never included in payable totals.
 - Group no-show reports require 20 minutes waited; one-to-one reports require 15. A report is not an automatic absence or parent-contact action. LSS can document escalation and resolution in the same record.
 - The source calendar is the 2026–27 planning baseline; it supersedes older chat announcements when the dates differ.
 - The supplied teacher announcement says the second half payment report is due on the 3rd of the following month, while the project brief says two days after the period. The application defaults to the brief (`two_calendar_days`). Set Worker variable `PAYMENT_DEADLINE_POLICY=legacy_announcement` only if the school confirms the legacy 17th/3rd rule.

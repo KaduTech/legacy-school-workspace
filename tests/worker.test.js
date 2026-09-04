@@ -136,6 +136,28 @@ test('attendance rejects an unknown status before it can reach D1', async () => 
   assert.deepEqual(await response.json(), { error: 'groupId, scheduledFor and 1–200 attendance records with valid statuses are required.' });
 });
 
+test('a teacher can record one completed session only after an assigned class has ended', async () => {
+  const writes = [];
+  const scopedEnv = {
+    ...env,
+    DB: { prepare(query) { return { bind(...values) { this.values = values; return this; }, async first() {
+      if (query.includes('FROM users')) return { id: 'teacher-user', email: 'teacher@example.test', name: 'Teacher', role: 'teacher', status: 'active' };
+      if (query.includes('SELECT id FROM teachers')) return { id: 'teacher-1' };
+      if (query.includes('FROM calendar_events')) return { id: 'event-1', group_id: 'group-1', ends_at: '2020-01-01T12:00:00.000Z', learning_mode: 'group' };
+      if (query.includes('FROM teacher_groups')) return { assigned: 1 };
+      if (query.includes('FROM recorded_sessions')) return null;
+      return null;
+    }, async run() { writes.push({ query, values: this.values }); return { success: true }; } }; } }
+  };
+  const response = await worker.fetch(new Request('https://app.example.test/api/calendar/events/event-1/session', { method: 'POST', headers: { cookie: await sessionCookie('teacher-user'), 'content-type': 'application/json' }, body: JSON.stringify({ outcome: 'completed' }) }), scopedEnv);
+  assert.equal(response.status, 201);
+  const insert = writes.find(write => write.query.startsWith('INSERT INTO recorded_sessions'));
+  assert.ok(insert);
+  assert.equal(insert.values[1], 'event-1');
+  assert.equal(insert.values[5], 'group');
+  assert.equal(insert.values[6], 'completed');
+});
+
 test('finance users cannot list student records', async () => {
   const scopedEnv = {
     ...env,
@@ -208,19 +230,23 @@ test('teacher onboarding invitations are rate-limited before an email is attempt
   assert.deepEqual(await response.json(), { error: 'An onboarding invitation was already sent for this teacher in the last 24 hours.' });
 });
 
-test('salary reports reject negative or estimated class counts before a write', async () => {
+test('salary reports calculate payable counts and pay from recorded sessions rather than client totals', async () => {
+  const writes = [];
   const scopedEnv = {
     ...env,
-    DB: { prepare(query) { return { bind() { return this; }, async first() {
+    DB: { prepare(query) { return { bind(...values) { this.values = values; return this; }, async first() {
       if (query.includes('FROM users')) return { id: 'teacher-user', email: 'teacher@example.test', name: 'Teacher', role: 'teacher', status: 'active', is_super_admin: 0 };
       if (query.includes('SELECT id FROM teachers')) return { id: 'teacher-1' };
-      if (query.includes('FROM pay_cycles')) return { id: 'cycle-1', submission_due_on: '2099-01-17', status: 'open' };
+      if (query.includes('FROM pay_cycles')) return { id: 'cycle-1', starts_on: '2099-01-01', ends_on: '2099-01-15', submission_due_on: '2099-01-17', status: 'open' };
+      if (query.includes('FROM time_entries')) return { hours: 1.5 };
       return null;
-    } }; } }
+    }, async all() { if (query.includes('FROM recorded_sessions')) return { results: [{ learning_mode: 'group', outcome: 'completed', count: 2 }, { learning_mode: 'one_to_one', outcome: 'completed', count: 1 }, { learning_mode: 'one_to_one', outcome: 'no_show', count: 1 }] }; return { results: [] }; }, async run() { writes.push({ query, values: this.values }); return { success: true }; } }; } }
   };
-  const response = await worker.fetch(new Request('https://app.example.test/api/pay-cycles/cycle-1/salary-reports', { method: 'POST', headers: { cookie: await sessionCookie('teacher-user'), 'content-type': 'application/json' }, body: JSON.stringify({ groupAttendedCount: -1, groupNoShowCount: 0, oneToOneAttendedCount: 0, oneToOneNoShowCount: 0, oneToOneTrialCount: 0, notes: 'Actual count.' }) }), scopedEnv);
-  assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: 'All class counts must be whole numbers from 0–1000 and a short work summary is required.' });
+  const response = await worker.fetch(new Request('https://app.example.test/api/pay-cycles/cycle-1/salary-reports', { method: 'POST', headers: { cookie: await sessionCookie('teacher-user'), 'content-type': 'application/json' }, body: JSON.stringify({ groupAttendedCount: -999, notes: 'Recorded sessions reviewed.' }) }), scopedEnv);
+  assert.equal(response.status, 201);
+  const insert = writes.find(write => write.query.startsWith('INSERT INTO salary_report_submissions'));
+  assert.ok(insert);
+  assert.deepEqual(insert.values.slice(3, 12), [2, 0, 1, 1, 0, 90, 3000, 750, 3750]);
 });
 
 test('Google callback rejects a missing or forged OAuth state before using the database', async () => {
@@ -306,7 +332,7 @@ test('an error-state form mapping is eligible for a retry rather than treated as
   }
 });
 
-test('a permitted operator can replace a form mapping and reset its import cursor', async () => {
+test('a permitted operator can replace a non-payroll form mapping and reset its import cursor', async () => {
   const writes = [];
   const scopedEnv = {
     ...env,
@@ -316,12 +342,27 @@ test('a permitted operator can replace a form mapping and reset its import curso
       return null;
     }, async run() { writes.push({ query, values: this.values }); return { success: true }; } }; } }
   };
-  const response = await worker.fetch(new Request('https://app.example.test/api/forms/mapping-1', { method: 'PATCH', headers: { cookie: await sessionCookie('admin-1'), 'content-type': 'application/json' }, body: JSON.stringify({ googleFormId: 'editable-test-form-id', label: 'Test payment report', purpose: 'payment_method' }) }), scopedEnv);
+  const response = await worker.fetch(new Request('https://app.example.test/api/forms/mapping-1', { method: 'PATCH', headers: { cookie: await sessionCookie('admin-1'), 'content-type': 'application/json' }, body: JSON.stringify({ googleFormId: 'editable-test-form-id', label: 'Test onboarding form', purpose: 'onboarding' }) }), scopedEnv);
   assert.equal(response.status, 200);
   const update = writes.find(write => write.query.startsWith('UPDATE form_mappings SET'));
   assert.ok(update);
   assert.match(update.query, /status='active',last_response_at=NULL/);
-  assert.deepEqual(update.values.slice(0, 3), ['editable-test-form-id', 'Test payment report', 'payment_method']);
+  assert.deepEqual(update.values.slice(0, 3), ['editable-test-form-id', 'Test onboarding form', 'onboarding']);
+});
+
+test('a permitted operator can remove an obsolete Form mapping', async () => {
+  const writes = [];
+  const scopedEnv = {
+    ...env,
+    DB: { prepare(query) { return { bind(...values) { this.values = values; return this; }, async first() {
+      if (query.includes('FROM users')) return { id: 'admin-1', email: 'admin@example.test', name: 'Admin', role: 'admin', status: 'active' };
+      if (query.includes('SELECT id,label,purpose FROM form_mappings')) return { id: 'mapping-1', label: 'Obsolete form', purpose: 'payment_method' };
+      return null;
+    }, async run() { writes.push({ query, values: this.values }); return { success: true }; } }; } }
+  };
+  const response = await worker.fetch(new Request('https://app.example.test/api/forms/mapping-1', { method: 'DELETE', headers: { cookie: await sessionCookie('admin-1') } }), scopedEnv);
+  assert.equal(response.status, 200);
+  assert.ok(writes.some(write => write.query === 'DELETE FROM form_mappings WHERE id=?' && write.values[0] === 'mapping-1'));
 });
 
 test('payment account numbers are encrypted before the worker writes them to D1', async () => {
@@ -342,7 +383,7 @@ test('payment account numbers are encrypted before the worker writes them to D1'
 
 test('the workspace portal keeps the operational workflows reachable after navigation', async () => {
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-  for (const label of ['Onboarding', 'Payments', 'Time & admin', 'Calendar', 'Incidents', 'Integrations']) assert.match(source, new RegExp(label));
+  for (const label of ['My profile', 'Onboarding', 'Payments', 'Time & admin', 'Calendar', 'Incidents', 'Integrations', 'Record session']) assert.match(source, new RegExp(label));
   assert.match(source, /root\.addEventListener\('click'/);
   assert.doesNotMatch(source, /\{once:true\}/);
   assert.match(source, /payment-details/);
@@ -350,5 +391,7 @@ test('the workspace portal keeps the operational workflows reachable after navig
   assert.match(source, /\/api\/attendance/);
   assert.match(source, /\/api\/forms/);
   assert.match(source, /form-edit/);
+  assert.match(source, /form-delete/);
   assert.match(source, /Replace form/);
+  assert.match(source, /Submit calculated salary report/);
 });

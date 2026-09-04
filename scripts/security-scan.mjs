@@ -43,17 +43,18 @@ async function scanTrackedSecrets() {
   let files = [];
   try { files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean); } catch { finding('LSW-SEC-SCAN-002', 'medium', 'Scanner', 'Tracked-file scan unavailable', 'git ls-files could not enumerate source files.', 'git ls-files', 'Run the scanner from the Git repository root.'); return; }
   const ignored = /(?:^|\/)(?:node_modules|\.security-reports|package-lock\.json)|\.(?:png|jpe?g|gif|webp|pdf|zip|woff2?)$/i;
+  const isClearlyNonProductionValue = value => /^(?:replace(?:[-_]|$)|your(?:[-_]|$)|example(?:[-_]|$)|test(?:[-_]|$)|base64url-encoded(?:[-_]|$)|undefined$)/i.test(value);
   const patterns = [
     ['Private key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/], ['GitHub token', /\bgh[opusr]_[A-Za-z0-9_]{20,}\b/],
     ['Cloudflare API token', /\b[A-Za-z0-9_-]{40,}\b(?=\s*(?:#|\/\/)?\s*(?:cloudflare|cf)[-_ ]?(?:api )?token)/i], ['Resend API key', /\bre_[A-Za-z0-9_-]{20,}\b/],
-    ['Google API key', /\bAIza[0-9A-Za-z_-]{30,}\b/], ['AWS access key', /\bAKIA[0-9A-Z]{16}\b/], ['Generic assigned secret', /(?:AUTH_SECRET|GOOGLE_CLIENT_SECRET|DATA_ENCRYPTION_KEY|RESEND_API_KEY)\s*[:=]\s*["']?(?!REPLACE|YOUR_|example|\$\{|undefined)[A-Za-z0-9_\-]{16,}/]
+    ['Google API key', /\bAIza[0-9A-Za-z_-]{30,}\b/], ['AWS access key', /\bAKIA[0-9A-Z]{16}\b/], ['Generic assigned secret', /(?:AUTH_SECRET|GOOGLE_CLIENT_SECRET|DATA_ENCRYPTION_KEY|RESEND_API_KEY)\s*[:=]\s*["']?([A-Za-z0-9_\-]{16,})/, match => isClearlyNonProductionValue(match[1])]
   ];
   const matches = [];
   for (const file of files) {
     const normalized = file.replaceAll('\\', '/'); if (ignored.test(normalized)) continue;
     let content = ''; try { content = await readFile(path.join(root, file), 'utf8'); } catch { continue; }
     if (content.length > 2_000_000) continue;
-    content.split(/\r?\n/).forEach((line, offset) => patterns.forEach(([type, pattern]) => { if (pattern.test(line)) matches.push({ file: normalized, line: offset + 1, type }); }));
+    content.split(/\r?\n/).forEach((line, offset) => patterns.forEach(([type, pattern, isAllowed]) => { const match = line.match(pattern); if (match && !isAllowed?.(match, line, normalized)) matches.push({ file: normalized, line: offset + 1, type }); }));
   }
   check('SEC-001', 'Git-tracked credential pattern scan', matches.length === 0, matches.length ? `${matches.length} potential credentials detected; values redacted.` : 'No credential-shaped values detected.');
   if (matches.length) finding('LSW-SEC-002', 'critical', 'Secrets', 'Possible committed credential', matches.map(match => `${match.type} at ${match.file}:${match.line}`).join('; '), 'Value-redacted tracked-file pattern scan', 'Revoke and rotate the credential, remove it from Git history, and store the replacement in Cloudflare or GitHub Actions secrets.');

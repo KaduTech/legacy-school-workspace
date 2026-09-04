@@ -306,6 +306,24 @@ test('an error-state form mapping is eligible for a retry rather than treated as
   }
 });
 
+test('a permitted operator can replace a form mapping and reset its import cursor', async () => {
+  const writes = [];
+  const scopedEnv = {
+    ...env,
+    DB: { prepare(query) { return { bind(...values) { this.values = values; return this; }, async first() {
+      if (query.includes('FROM users')) return { id: 'admin-1', email: 'admin@example.test', name: 'Admin', role: 'admin', status: 'active' };
+      if (query.includes('SELECT id FROM form_mappings')) return { id: 'mapping-1' };
+      return null;
+    }, async run() { writes.push({ query, values: this.values }); return { success: true }; } }; } }
+  };
+  const response = await worker.fetch(new Request('https://app.example.test/api/forms/mapping-1', { method: 'PATCH', headers: { cookie: await sessionCookie('admin-1'), 'content-type': 'application/json' }, body: JSON.stringify({ googleFormId: 'editable-test-form-id', label: 'Test payment report', purpose: 'payment_method' }) }), scopedEnv);
+  assert.equal(response.status, 200);
+  const update = writes.find(write => write.query.startsWith('UPDATE form_mappings SET'));
+  assert.ok(update);
+  assert.match(update.query, /status='active',last_response_at=NULL/);
+  assert.deepEqual(update.values.slice(0, 3), ['editable-test-form-id', 'Test payment report', 'payment_method']);
+});
+
 test('payment account numbers are encrypted before the worker writes them to D1', async () => {
   const writes = [];
   const scopedEnv = {
@@ -331,4 +349,6 @@ test('the workspace portal keeps the operational workflows reachable after navig
   assert.match(source, /teachers\/\$\{encodeURIComponent\(id\)\}\/invite/);
   assert.match(source, /\/api\/attendance/);
   assert.match(source, /\/api\/forms/);
+  assert.match(source, /form-edit/);
+  assert.match(source, /Replace form/);
 });

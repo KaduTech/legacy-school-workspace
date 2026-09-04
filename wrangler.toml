@@ -12,6 +12,7 @@ APP_ORIGIN = "https://legacy.kadutech.com"
 BOOTSTRAP_ADMIN_EMAIL = "kadutechsolutions@gmail.com"
 GOOGLE_CLIENT_ID = "847768257798-u43nv6pn63kolugomfm4sc04ao40biar.apps.googleusercontent.com"
 GOOGLE_REDIRECT_URI = "https://legacy.kadutech.com/auth/google/callback"
+GOOGLE_OAUTH_ALLOWED_EMAIL = "kadutechsolutions@gmail.com"
 RESEND_FROM = "Legacy School <school@kadutech.org>"
 
 [assets]
